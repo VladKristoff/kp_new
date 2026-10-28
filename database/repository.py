@@ -125,3 +125,25 @@ def get_score_distribution(bin_size: float = 1.0) -> list:
         b = int(s // bin_size * bin_size)
         result[b] = result.get(b, 0) + 1
     return [(b, result.get(b, 0)) for b in range(start, int(max(scores)) + 1, int(bin_size))]
+
+TYPE_ORDER = ["Урок", "ПР", "ЛР", "ДЗ", "Зачет"]
+
+
+def get_avg_by_type() -> list:
+    """
+    Средний полученный балл по каждому типу работ — для диаграммы.
+    Учитываются только выставленные оценки (пустые ячейки не считаются нулём).
+    Возвращает список словарей: tip, avg, max_ball, count — в привычном порядке типов.
+    """
+    with db_session() as conn:
+        rows = conn.execute("""
+            SELECT a.tip, AVG(g.poluchenny_ball), MAX(a.max_ball), COUNT(g.poluchenny_ball)
+            FROM Activities a
+            JOIN Grades g ON g.activity_id = a.id
+            WHERE g.poluchenny_ball IS NOT NULL
+            GROUP BY a.tip
+        """).fetchall()
+
+    data = [{"tip": r[0], "avg": r[1], "max_ball": r[2], "count": r[3]} for r in rows]
+    data.sort(key=lambda d: TYPE_ORDER.index(d["tip"]) if d["tip"] in TYPE_ORDER else len(TYPE_ORDER))
+    return data
