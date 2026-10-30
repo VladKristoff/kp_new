@@ -1,12 +1,14 @@
-import csv
 import os
 import tkinter as tk
+from datetime import date as date_cls
 from tkinter import ttk, messagebox, filedialog
+
+from tkcalendar import DateEntry
 
 from config import FONT_FAMILY, LOW_SCORE_THRESHOLD, HIGH_ABSENCES_THRESHOLD
 from database import repository
 from styles import configure_tree_tags
-from utils.dates import iso_to_display, display_to_iso
+from utils.dates import iso_to_display, iso_to_date, date_to_iso
 from view.tabs import build_tabs
 
 
@@ -23,9 +25,9 @@ def initials(fio):
 class StudentsPage:
     SEARCH_DELAY_MS = 250  # задержка перед поиском, чтобы не запрашивать БД на каждую букву
 
-    # столбец таблицы -> столбец БД
-    SORTABLE = {"fio": "fio", "score": "itog_ball", "absences": "kol_propuskov"}
-    HEADINGS = {"id": "№", "fio": "ФИО", "score": "Итоговый балл", "absences": "Количество пропусков"}
+    # столбец таблицы -> столбец/алиас БД
+    SORTABLE = {"fio": "fio", "score": "itog_ball", "missed": "missed"}
+    HEADINGS = {"id": "№", "fio": "ФИО", "score": "Итоговый балл", "missed": "Пропущено занятий"}
 
     def __init__(self, main_frame, app, filepath):
         self.main_frame = main_frame
@@ -95,7 +97,7 @@ class StudentsPage:
         self.search_entry.pack(fill="x")
         self.search_var.trace_add("write", self.on_search_changed)
 
-        # --- Статистика плитками 2x2 ---
+        # --- Статистика плитками 2 колонки ---
         stats = self._card(panel, "Общая информация")
         grid = ttk.Frame(stats, style="Surface.TFrame")
         grid.pack(fill="x")
@@ -104,6 +106,10 @@ class StudentsPage:
         self.shown_label = self._tile(grid, 0, 1, "Показано")
         self.avg_score_label = self._tile(grid, 1, 0, "Средний балл")
         self.avg_absences_label = self._tile(grid, 1, 1, "Среднее пропусков")
+        # «Осталось занятий» — одно число на весь курс (не по каждому студенту),
+        # поэтому вынесено сюда, а не в столбец таблицы
+        self.remaining_label = self._tile(grid, 2, 0, "Осталось занятий")
+        self.total_lessons_label = self._tile(grid, 2, 1, "Всего занятий")
 
         # --- Легенда ---
         legend = self._card(panel, "Подсветка")
@@ -149,7 +155,7 @@ class StudentsPage:
         table_card = ttk.Frame(parent, style="Card.TFrame", padding=1)
         table_card.pack(side="right", fill="both", expand=True)
 
-        columns = ("id", "fio", "score", "absences")
+        columns = ("id", "fio", "score", "missed")
         self.student_table = ttk.Treeview(table_card, columns=columns, show="headings",
                                           selectmode="browse")
         scrollbar = ttk.Scrollbar(table_card, orient="vertical", command=self.student_table.yview)
@@ -157,7 +163,7 @@ class StudentsPage:
 
         # (ширина, выравнивание, растягивается ли при изменении окна)
         layout = {"id": (60, "center", False), "fio": (300, "w", True),
-                  "score": (140, "center", False), "absences": (200, "center", False)}
+                  "score": (140, "center", False), "missed": (200, "center", False)}
         for col in columns:
             width, anchor, stretch = layout[col]
             self.student_table.heading(col, text=self.HEADINGS[col], anchor=anchor)
@@ -250,6 +256,7 @@ class StudentsPage:
             rows = repository.get_students(self.search_var.get(), self.sort_var.get(),
                                            self.sort_column, self.sort_dir)
             stats = repository.get_stats()
+            overview = repository.get_lesson_overview()
         except Exception as e:
             messagebox.showerror("Ошибка базы данных", f"Не удалось получить данные:\n{e}")
             return
@@ -260,19 +267,19 @@ class StudentsPage:
             # Один тег на строку: подсветка проблем важнее чередования
             if row["itog_ball"] is not None and row["itog_ball"] < self.low_score:
                 tag = "low_score"
-            elif row["kol_propuskov"] is not None and row["kol_propuskov"] > self.high_absences:
+            elif row["missed"] is not None and row["missed"] > self.high_absences:
                 tag = "many_absences"
             else:
                 tag = "even" if index % 2 else "odd"
             self.student_table.insert(
                 "", "end", iid=str(row["id"]), tags=(tag,),
                 values=(row["id"], row["fio"], fmt_number(row["itog_ball"]),
-                        fmt_number(row["kol_propuskov"])))
+                        fmt_number(row["missed"])))
 
         low_count = sum(1 for r in rows
                         if r["itog_ball"] is not None and r["itog_ball"] < self.low_score)
         warn_count = sum(1 for r in rows
-                         if r["kol_propuskov"] is not None and r["kol_propuskov"] > self.high_absences)
+                         if r["missed"] is not None and r["missed"] > self.high_absences)
         self.low_count_label.config(text=str(low_count))
         self.warn_count_label.config(text=str(warn_count))
 
@@ -288,7 +295,9 @@ class StudentsPage:
         self.shown_label.config(text=str(len(rows)))
         self.avg_score_label.config(text=fmt_number(round(stats.avg_score, 2) if stats.avg_score is not None else None))
         self.avg_absences_label.config(
-            text=fmt_number(round(stats.avg_absences, 2) if stats.avg_absences is not None else None))
+            text=fmt_number(round(stats.avg_missed, 2) if stats.avg_missed is not None else None))
+        self.remaining_label.config(text=str(overview["remaining"]))
+        self.total_lessons_label.config(text=str(overview["total"]))
 
     def on_table_select(self, _event=None):
         state = tk.NORMAL if self.student_table.selection() else tk.DISABLED
@@ -349,64 +358,74 @@ class StudentsPage:
         ttk.Label(top, text=f"Место в группе: {place}",
                   style="Subtitle.TLabel").grid(row=1, column=1, sticky="nw")
 
-        for col, (value, caption) in enumerate(
-                ((fmt_number(student["itog_ball"]), "Итоговый балл"),
-                 (fmt_number(student["kol_propuskov"]), "Пропусков")), start=2):
-            tile = ttk.Frame(top, style="Surface.TFrame")
-            tile.grid(row=0, column=col, rowspan=2, padx=(28, 0))
-            ttk.Label(tile, text=value, style="Value.TLabel").pack()
-            ttk.Label(tile, text=caption, style="CardHint.TLabel").pack()
+        score_tile = ttk.Frame(top, style="Surface.TFrame")
+        score_tile.grid(row=0, column=2, rowspan=2, padx=(28, 0))
+        ttk.Label(score_tile, text=fmt_number(student["itog_ball"]), style="Value.TLabel").pack()
+        ttk.Label(score_tile, text="Итоговый балл", style="CardHint.TLabel").pack()
 
-        # --- Дата, до которой учитываем занятия ---
+        missed_tile = ttk.Frame(top, style="Surface.TFrame")
+        missed_tile.grid(row=0, column=3, rowspan=2, padx=(28, 0))
+        missed_value = ttk.Label(missed_tile, text="—", style="Value.TLabel")
+        missed_value.pack()
+        ttk.Label(missed_tile, text="Пропущено занятий", style="CardHint.TLabel").pack()
+
+        # --- Дата, до которой учитываем занятия (выбирается календарём) ---
         last_date = repository.get_last_graded_date()
-        date_var = tk.StringVar(value=iso_to_display(last_date))
+        initial_date = iso_to_date(last_date) or date_cls.today()
+
         date_row = ttk.Frame(container)
         date_row.pack(fill="x", pady=(0, 12))
         ttk.Label(date_row, text="Учитывать занятия до:").pack(side="left")
-        date_entry = ttk.Entry(date_row, textvariable=date_var, width=12)
-        date_entry.pack(side="left", padx=10)
-        apply_btn = ttk.Button(date_row, text="Применить", style="Secondary.TButton", cursor="hand2")
-        apply_btn.pack(side="left")
-        ttk.Label(date_row, text="дд.мм.гггг · по умолчанию — дата последнего оценённого занятия",
+
+        calendar_colors = dict(
+            background=p["accent"], foreground=p["on_accent"],
+            headersbackground=p["accent"], headersforeground=p["on_accent"],
+            normalbackground=p["surface"], normalforeground=p["text"],
+            weekendbackground=p["surface"], weekendforeground=p["text"],
+            selectbackground=p["accent"], selectforeground=p["on_accent"],
+            othermonthbackground=p["surface_alt"], othermonthforeground=p["muted"],
+            othermonthwebackground=p["surface_alt"], othermonthweforeground=p["muted"],
+            disabledbackground=p["disabled_bg"], disabledforeground=p["disabled_fg"],
+            bordercolor=p["border"])
+        # Разные версии tkcalendar/системная локаль иногда не принимают часть параметров —
+        # пробуем от самого полного варианта к самому простому, лишь бы календарь открылся.
+        date_picker = None
+        for kwargs in (dict(locale="ru_RU", **calendar_colors), calendar_colors, {}):
+            try:
+                date_picker = DateEntry(date_row, width=11, date_pattern="dd.mm.yyyy", **kwargs)
+                break
+            except Exception:
+                continue
+        date_picker.set_date(initial_date)
+        date_picker.pack(side="left", padx=10)
+        ttk.Label(date_row, text="по умолчанию — дата последнего оценённого занятия",
                   style="Hint.TLabel").pack(side="left", padx=12)
 
-        # --- Таблицы ---
+        # --- Таблица пропущенных занятий ---
         lessons_card, lessons_title = self._table_card(container, "Пропущенные занятия")
         lessons_table = self._build_activity_table(
             lessons_card, (("date", "Дата", 100, "center"), ("name", "Занятие", 110, "center"),
-                           ("topic", "Тема", 600, "w")))
-
-        works_card, works_title = self._table_card(container, "Работы без оценки")
-        works_table = self._build_activity_table(
-            works_card, (("date", "Дата", 100, "center"), ("name", "Название", 220, "w"),
-                         ("type", "Тип", 100, "center"), ("topic", "Тема", 400, "w")))
+                           ("topic", "Тема", 600, "w")), height=12)
 
         def fill(_event=None):
             try:
-                up_to = display_to_iso(date_var.get())
-            except ValueError:
-                messagebox.showerror("Неверная дата", "Введите дату в формате дд.мм.гггг, "
-                                                      "например 06.10.2025.", parent=win)
+                up_to = date_to_iso(date_picker.get_date())
+            except Exception:
+                messagebox.showerror("Неверная дата", "Выберите дату в календаре.", parent=win)
                 return
-            rows = repository.get_empty_activities(student_id, up_to)
-            lessons = [r for r in rows if r["tip"] in repository.LESSON_TYPES]
-            works = [r for r in rows if r["tip"] not in repository.LESSON_TYPES]
+            lessons = repository.get_missed_lessons(student_id, up_to)
 
             lessons_table.delete(*lessons_table.get_children())
-            works_table.delete(*works_table.get_children())
             for i, r in enumerate(lessons):
                 name = f"Урок {r['nazvanie']}" if r["nazvanie"].isdigit() else r["nazvanie"]
                 lessons_table.insert("", "end", tags=("even" if i % 2 else "odd",),
                                      values=(iso_to_display(r["data"]), name, r["tema"] or ""))
-            for i, r in enumerate(works):
-                works_table.insert("", "end", tags=("even" if i % 2 else "odd",),
-                                   values=(iso_to_display(r["data"]), r["nazvanie"],
-                                           r["tip"], r["tema"] or ""))
             lessons_title.config(text=f"Пропущенные занятия ({len(lessons)})")
-            works_title.config(text=f"Работы без оценки ({len(works)})")
+            missed_value.config(text=str(len(lessons)))
 
-        apply_btn.config(command=fill)
-        date_entry.bind("<Return>", fill)
+        date_picker.bind("<<DateEntrySelected>>", fill)
+        date_picker.bind("<Return>", fill)
+        date_picker.bind("<FocusOut>", fill)
 
         ttk.Button(container, text="Закрыть", style="Secondary.TButton", cursor="hand2",
                    command=win.destroy).pack(pady=(14, 0), anchor="e")
@@ -420,11 +439,11 @@ class StudentsPage:
         title_label.pack(anchor="w", pady=(0, 8))
         return card, title_label
 
-    def _build_activity_table(self, parent, columns):
+    def _build_activity_table(self, parent, columns, height=5):
         frame = ttk.Frame(parent, style="Surface.TFrame")
         frame.pack(fill="both", expand=True)
         ids = [c[0] for c in columns]
-        table = ttk.Treeview(frame, columns=ids, show="headings", height=5)
+        table = ttk.Treeview(frame, columns=ids, show="headings", height=height)
         scroll = ttk.Scrollbar(frame, orient="vertical", command=table.yview)
         table.configure(yscrollcommand=scroll.set)
         for col_id, title, width, anchor in columns:

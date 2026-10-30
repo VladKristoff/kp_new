@@ -184,24 +184,24 @@ def set_styles(root, theme="light"):
         _button(style, name, bg=base, hover=p["btn2_hover"], pressed=p["btn2_active"],
                 fg=p["text"], disabled_bg=base, disabled_fg=p["disabled_fg"],
                 font=(F, 11, "bold"), padding=(12, 8))
-    # Вкладки в шапке
-    _button(style, "Tab.TButton", bg=p["header"], hover=p["btn2_hover"], pressed=p["btn2_active"],
-            fg=p["muted"], fg_pressed=p["text"], disabled_bg=p["header"],
-            disabled_fg=p["disabled_fg"], font=(F, 11, "bold"), padding=(16, 8))
-    _button(style, "TabActive.TButton", bg=p["accent_soft"], hover=p["accent_soft"],
-            pressed=p["accent_soft"], fg=p["accent"], disabled_bg=p["accent_soft"],
-            disabled_fg=p["accent"], font=(F, 11, "bold"), padding=(16, 8))
+    style.configure("ArrowButton.TButton", font=(F, 12, "bold"))  # совместимость со старым кодом
 
-    # Пункты списка диаграмм на левой панели
-    _button(style, "ChartItem.TButton", bg=p["surface"], hover=p["btn2_hover"],
-            pressed=p["btn2_active"], fg=p["text"], disabled_bg=p["surface"],
-            disabled_fg=p["disabled_fg"], font=(F, 10, "bold"), padding=(12, 9))
+    # --- Вкладки в шапке: сегментированный переключатель (таблетка) ---
+    style.configure("TabsBar.TFrame", background=p["btn2"], relief="solid", borderwidth=1,
+                    bordercolor=p["border"], lightcolor=p["border"], darkcolor=p["border"])
+    _button(style, "TabActive.TButton", bg=p["surface"], hover=p["surface"], pressed=p["surface"],
+            fg=p["accent"], disabled_bg=p["surface"], disabled_fg=p["disabled_fg"],
+            font=(F, 10, "bold"), padding=(20, 9))
+    _button(style, "Tab.TButton", bg=p["btn2"], hover=p["btn2_hover"], pressed=p["btn2_active"],
+            fg=p["muted"], disabled_bg=p["btn2"], disabled_fg=p["disabled_fg"],
+            font=(F, 10, "bold"), padding=(20, 9))
+
+    # --- Пункты списка диаграмм (боковая панель) ---
     _button(style, "ChartItemActive.TButton", bg=p["accent_soft"], hover=p["accent_soft"],
             pressed=p["accent_soft"], fg=p["accent"], disabled_bg=p["accent_soft"],
-            disabled_fg=p["accent"], font=(F, 10, "bold"), padding=(12, 9))
-    for name in ("ChartItem.TButton", "ChartItemActive.TButton"):
-        style.configure(name, anchor="w")
-
-    style.configure("ArrowButton.TButton", font=(F, 12, "bold"))  # совместимость со старым кодом
+            disabled_fg=p["disabled_fg"], font=(F, 10, "bold"), padding=(12, 10))
+    _button(style, "ChartItem.TButton", bg=p["surface"], hover=p["surface_alt"],
+            pressed=p["surface_alt"], fg=p["text"], disabled_bg=p["surface"],
+            disabled_fg=p["disabled_fg"], font=(F, 10), padding=(12, 10))
 
     return p

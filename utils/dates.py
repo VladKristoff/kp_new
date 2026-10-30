@@ -46,3 +46,16 @@ def iso_to_display(iso: str) -> str:
 def display_to_iso(text: str) -> str:
     """'05.09.2025' -> '2025-09-05'. Бросает ValueError при неверном формате."""
     return datetime.strptime(text.strip(), "%d.%m.%Y").date().isoformat()
+
+
+def iso_to_date(iso: str) -> Optional[date]:
+    """'2025-09-05' -> date(2025, 9, 5). Пустая/невалидная строка -> None."""
+    try:
+        return datetime.strptime(iso, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def date_to_iso(value: date) -> str:
+    """date -> 'YYYY-MM-DD'."""
+    return value.isoformat()

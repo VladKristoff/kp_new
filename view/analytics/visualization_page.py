@@ -28,20 +28,11 @@ class VisualizationPage:
         self.app = app
         self.filepath = filepath
 
-        # Реестр диаграмм: ключ -> (название в списке слева, метод отрисовки).
-        # Чтобы добавить новую диаграмму, достаточно дописать сюда строку и метод draw_*.
-        self.charts = {
-            "students_scores": ("Баллы студентов", self.draw_students_scores),
-            "avg_by_type": ("Средний балл по типам работ", self.draw_avg_by_type),
-        }
-        self.current_chart = "students_scores"
-        self._chart_buttons = {}
         self.sort_var = tk.StringVar(value=self.SORT_VALUES[0])
         self.threshold = float(LOW_SCORE_THRESHOLD)
 
         self._students = []   # [(фио, балл)] — только студенты с итоговым баллом
         self._no_score = 0    # сколько студентов без итогового балла
-        self._types = []
 
         self.create_widgets()
         self.load_data()
@@ -85,18 +76,7 @@ class VisualizationPage:
         panel.pack(side="left", fill="y", padx=(0, 18), anchor="n")
         panel.pack_propagate(False)
 
-        # --- Выбор диаграммы ---
-        card = ttk.Frame(panel, style="Card.TFrame", padding=16)
-        card.pack(fill="x", pady=(0, 14))
-        ttk.Label(card, text="Диаграммы", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 10))
-        for key, (title, _draw) in self.charts.items():
-            btn = ttk.Button(card, text=title, cursor="hand2",
-                             command=lambda k=key: self.select_chart(k))
-            btn.pack(fill="x", pady=2)
-            self._chart_buttons[key] = btn
-        self._update_chart_buttons()
-
-        # --- Сортировка (для диаграммы по студентам) ---
+        # --- Сортировка ---
         sort_card = ttk.Frame(panel, style="Card.TFrame", padding=16)
         sort_card.pack(fill="x", pady=(0, 14))
         ttk.Label(sort_card, text="Сортировка", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 10))
@@ -104,8 +84,6 @@ class VisualizationPage:
                              values=self.SORT_VALUES)
         combo.pack(fill="x")
         combo.bind("<<ComboboxSelected>>", lambda _e: self.draw())
-        ttk.Label(sort_card, text="Действует для диаграммы «Баллы студентов»",
-                  style="CardHint.TLabel", wraplength=240, justify="left").pack(anchor="w", pady=(8, 0))
 
         # --- Сводка ---
         stats = ttk.Frame(panel, style="Card.TFrame", padding=16)
@@ -122,11 +100,6 @@ class VisualizationPage:
         ttk.Label(parent, text=caption, style="CardHint.TLabel").pack(anchor="w", pady=(0, 6))
         return value
 
-    def _update_chart_buttons(self):
-        for key, btn in self._chart_buttons.items():
-            btn.config(style="ChartItemActive.TButton" if key == self.current_chart
-                       else "ChartItem.TButton")
-
     # ------------------------------------------------------------------
     # Данные и действия
     # ------------------------------------------------------------------
@@ -134,7 +107,6 @@ class VisualizationPage:
     def load_data(self):
         try:
             rows = repository.get_students()
-            self._types = repository.get_avg_by_type()
         except Exception as e:
             messagebox.showerror("Ошибка базы данных", f"Не удалось получить данные:\n{e}")
             return
@@ -149,11 +121,6 @@ class VisualizationPage:
             self.best_label.config(text=f"{fmt_number(best_score)} · {short_name(best_name)}")
             self.avg_label.config(text=fmt_number(avg))
             self.low_label.config(text=f"{low} из {len(self._students)}")
-
-    def select_chart(self, key):
-        self.current_chart = key
-        self._update_chart_buttons()
-        self.draw()
 
     def back_to_main_menu(self):
         if messagebox.askyesno("Внимание!", "Вы уверены, что хотите выйти в главное меню?"):
@@ -174,7 +141,7 @@ class VisualizationPage:
         w, h = c.winfo_width(), c.winfo_height()
         c.configure(scrollregion=(0, 0, w, h))
         c.yview_moveto(0)
-        self.charts[self.current_chart][1](c)
+        self.draw_students_scores(c)
 
     def _title(self, c, title, subtitle):
         p = self.app.palette
@@ -249,47 +216,5 @@ class VisualizationPage:
         if self._no_score:
             c.create_text(28, base_y + 32, anchor="nw", fill=p["muted"], font=(F, 9),
                           text=f"Студентов без итогового балла (не показаны): {self._no_score}")
-
-    def draw_avg_by_type(self, c):
-        p, F = self.app.palette, FONT_FAMILY
-        w, h = c.winfo_width(), c.winfo_height()
-        if w < 50 or h < 50:
-            return
-
-        self._title(c, "Средний балл по типам работ",
-                    "Яркий столбец — средний полученный балл, бледный — максимум за работу")
-
-        if not self._types:
-            c.create_text(w / 2, h / 2, text="Нет данных для диаграммы", fill=p["muted"], font=(F, 12))
-            return
-
-        left, right, top, bottom = 64, 32, 100, 80
-        plot_w, plot_h = w - left - right, h - top - bottom
-        y_max = max(d["max_ball"] for d in self._types)
-        base_y = top + plot_h
-
-        ticks = 5
-        for i in range(ticks + 1):
-            value = y_max * i / ticks
-            y = base_y - plot_h * i / ticks
-            c.create_line(left, y, w - right, y, fill=p["border"])
-            c.create_text(left - 10, y, anchor="e", text=f"{value:g}", fill=p["muted"], font=(F, 9))
-
-        slot = plot_w / len(self._types)
-        bar_w = min(96, slot * 0.5)
-        for i, d in enumerate(self._types):
-            cx = left + slot * (i + 0.5)
-            x0, x1 = cx - bar_w / 2, cx + bar_w / 2
-            max_y = base_y - plot_h * d["max_ball"] / y_max
-            avg_y = base_y - plot_h * d["avg"] / y_max
-
-            c.create_rectangle(x0, max_y, x1, base_y, fill=p["accent_soft"], outline="")
-            c.create_rectangle(x0, avg_y, x1, base_y, fill=p["accent"], outline="")
-            c.create_text(cx, avg_y - 8, anchor="s", text=fmt_number(d["avg"]),
-                          fill=p["text"], font=(F, 11, "bold"))
-            c.create_text(cx, base_y + 14, anchor="n", text=d["tip"], fill=p["text"], font=(F, 11, "bold"))
-            c.create_text(cx, base_y + 34, anchor="n",
-                          text=f"из {fmt_number(d['max_ball'])} · {d['count']} оценок",
-                          fill=p["muted"], font=(F, 9))
 
         c.create_line(left, base_y, w - right, base_y, fill=p["muted"])
